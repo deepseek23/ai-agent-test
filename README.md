@@ -9,7 +9,7 @@ Built for the Aster & Row intern take-home: grounded answers, explicit sources, 
 ## Demo video
 
 
-**Demo video:** [Watch demo (YouTube / Drive / Loom)](YOUR_VIDEO_LINK_HERE)
+**Demo video:** [Watch demo (YouTube / Drive / Loom)](https://youtu.be/rnA_0aJmVXE)
 
 
 
