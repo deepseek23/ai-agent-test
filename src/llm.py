@@ -6,7 +6,7 @@ from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.config import CHAT_MODEL
-from src.tools import make_kb_tool, make_order_lookup_tool
+from src.tools import make_order_lookup_tool
 from src.prompts import SYSTEM_PROMPT
 from src.retriever import build_hybrid_retriever
 from src.security import wrap_tools
@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 _memory = MemorySaver()
 _agent = None
+_hybrid_retriever = None
+
+
+def get_retriever():
+    global _hybrid_retriever
+    if _hybrid_retriever is None:
+        _hybrid_retriever = build_hybrid_retriever()
+        logger.info("Hybrid retriever ready")
+    return _hybrid_retriever
 
 
 def get_agent():
@@ -24,12 +33,11 @@ def get_agent():
     if _agent is None:
         logger.info("AGENT INIT START | model=%s", CHAT_MODEL)
 
-        hybrid_retriever = build_hybrid_retriever()
+        get_retriever()
         logger.info("AGENT INIT | hybrid retriever ready")
 
-        kb_tool = make_kb_tool(hybrid_retriever)
         order_tool = make_order_lookup_tool()
-        tools = wrap_tools(kb_tool, order_tool)
+        tools = wrap_tools(order_tool)
         logger.info("AGENT INIT | tools ready | count=%d", len(tools))
 
         llm = init_chat_model(CHAT_MODEL)

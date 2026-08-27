@@ -353,7 +353,7 @@
       "carrier": "Canada Post",
       "tracking_number": "AR1011CA00001",
       "estimated_delivery": null,
-      "customer_safe_message": "The order has shipped with Canada Post. A delivery estimate is not currently available.",
+      "customer_safe_message": "The order has shipped with Canada Post. The delivery estimate is unavailable.",
       "internal": {
         "risk_score": 10,
         "warehouse_note": "Carrier ETA feed unavailable.",

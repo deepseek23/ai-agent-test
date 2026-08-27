@@ -3,8 +3,10 @@ import time
 from typing import Any
 
 from src.config import LOG_MAX_TOOL_RESULT_CHARS
-from src.llm import get_agent
+from src.llm import get_agent, get_retriever
+from src.prompts import RETRIEVAL_CONTEXT_HEADER
 from src.security import security
+from src.tools.kb_tool import format_chunks_for_llm
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,20 @@ def _log_messages(thread_id: str, messages: list, trace: list[dict[str, Any]] | 
             )
 
 
+def _augment_with_retrieval(user_input: str) -> str:
+    """Pre-retrieve KB passages and inject them into the user message."""
+    retriever = get_retriever()
+    chunks = retriever.invoke(user_input)
+    context = format_chunks_for_llm(chunks)
+    return (
+        f"{RETRIEVAL_CONTEXT_HEADER}\n\n"
+        f"--- RETRIEVED KNOWLEDGE BASE PASSAGES ---\n"
+        f"{context}\n\n"
+        f"--- CUSTOMER MESSAGE ---\n"
+        f"{user_input}"
+    )
+
+
 def run_agent(
     user_input: str,
     thread_id: str = "user-1",
@@ -146,21 +162,34 @@ def run_agent(
     }
 
     agent = get_agent()
-    try:
-        result = agent.invoke(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": cleaned_input,
-                    }
-                ]
-            },
-            config=config,
-        )
-    except Exception:
-        logger.exception("AGENT INVOKE FAILED | thread=%s", thread_id)
-        raise
+    augmented_input = _augment_with_retrieval(cleaned_input)
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            result = agent.invoke(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": augmented_input,
+                        }
+                    ]
+                },
+                config=config,
+            )
+            break
+        except Exception as exc:
+            if attempt < max_attempts - 1 and "RESOURCE_EXHAUSTED" in str(exc):
+                wait_seconds = 40
+                logger.warning(
+                    "AGENT RATE LIMITED | thread=%s | retrying in %ss",
+                    thread_id,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                continue
+            logger.exception("AGENT INVOKE FAILED | thread=%s", thread_id)
+            raise
 
     messages = result.get("messages", [])
     _log_messages(thread_id, messages, trace)

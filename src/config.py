@@ -6,10 +6,15 @@ CHROMA_DIR = PROJECT_ROOT / "notebook" / "chroma_langchain_db"
 KB_DIR = PROJECT_ROOT / "knowledge-base"
 ORDERS_PATH = PROJECT_ROOT / "data" / "orders.json"
 EVAL_FILE = PROJECT_ROOT / "evaluation" / "visible-cases.json"
+CUSTOM_EVAL_FILE = PROJECT_ROOT / "evaluation" / "custom-cases.json"
 
 COLLECTION_NAME = "example_collection"
-EMBEDDING_MODEL = "huggingface:BAAI/bge-small-en-v1.5"
+# EMBEDDING_MODEL = "huggingface:BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL = "google_genai:gemini-embedding-001"
+
 CHAT_MODEL = "google_genai:gemini-3.1-flash-lite"
+# CHAT_MODEL = "openrouter:nvidia/nemotron-3.5-lightning:free"
+
 
 CANCELLATION_WINDOW_MINUTES = 30
 TERMINAL_NON_DELIVERY_STATUSES = {"cancelled", "returned"}

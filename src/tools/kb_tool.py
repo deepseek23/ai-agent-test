@@ -7,7 +7,7 @@ class KBQueryInput(BaseModel):
     query: str = Field(description="Natural-language question to look up in the knowledge base.")
 
 
-def _format_chunks_for_llm(chunks: list[Document]) -> str:
+def format_chunks_for_llm(chunks: list[Document]) -> str:
     """Serialize retrieved LangChain documents into a labelled context block."""
     if not chunks:
         return "[No relevant passages found in the knowledge base.]"
@@ -36,7 +36,7 @@ def _format_chunks_for_llm(chunks: list[Document]) -> str:
 def make_kb_tool(retriever) -> StructuredTool:
     def _run_kb_query(query: str) -> str:
         chunks = retriever.invoke(query)
-        return _format_chunks_for_llm(chunks)
+        return format_chunks_for_llm(chunks)
 
     return StructuredTool.from_function(
         func=_run_kb_query,
