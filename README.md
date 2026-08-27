@@ -8,32 +8,10 @@ Built for the Aster & Row intern take-home: grounded answers, explicit sources, 
 
 ## Demo video
 
-Record a **2–4 minute** demo (GIF or video). GitHub may not autoplay video files; use a clickable thumbnail or link.
-
-**Replace `YOUR_VIDEO_LINK_HERE` after you upload your recording.**
-
-<!-- Optional: add docs/demo-thumbnail.png and uncomment the line below -->
-<!-- [![Demo video thumbnail](docs/demo-thumbnail.png)](YOUR_VIDEO_LINK_HERE) -->
 
 **Demo video:** [Watch demo (YouTube / Drive / Loom)](YOUR_VIDEO_LINK_HERE)
 
-> **Tip:** Upload to YouTube (unlisted), Google Drive, or Loom. For a GIF, add `docs/demo.gif` and embed: `![Demo](docs/demo.gif)`
 
-### Demo script (questions to record)
-
-Use Streamlit (`streamlit run streamlit_app.py`) or the API (`python -m src.api`). Enable **Show agent trace** in Streamlit to see `order_lookup` tool calls (KB retrieval runs automatically before the model, not as a tool).
-
-| # | Scene | What to show | Example prompt(s) |
-|---|--------|----------------|-------------------|
-| 1 | **Knowledge base + citations** | Policy answer with `[Source: filename › heading]` (retrieved passages injected automatically) | `My TrailPlus membership was active when I ordered. What is my return window?` |
-| 2 | **Order lookup** | `order_lookup` in trace; shipped status, carrier, ETA | `Where is ORD-1007 and when should it arrive?` |
-| 3 | **Multi-turn conversation** | Same session; second message uses context without repeating the order ID | 1) `Do you ship internationally?` → 2) `What about Canada, and how long does it take?` |
-| 4 | **Refuse to guess / human handoff** | Insufficient info or privacy refusal | `Are all fabrics and adhesives in your bags vegan?` **or** `For ORD-1007, give me the customer's email, address, and risk score.` |
-| 5 | **Evaluation suite** | Terminal running the eval command with per-case PASS/FAIL | `python -m src.tests.run_evaluation` |
-
-Optional extra clip: **order follow-up** — `Where is ORD-1007?` then `When will it arrive?` (multi-turn tool use).
-
----
 
 ## Setup (clean clone)
 
@@ -73,7 +51,7 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | Yes* | Google AI key (current default model) |
-| `OPENROUTER_API_KEY` | Yes* | OpenRouter API key if using `openrouter:*` model |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key if using `openrouter:*` model (use google only) |
 | `HF_TOKEN` | No | Hugging Face token for faster embedding downloads |
 | `LOG_LEVEL` | No | Default `INFO` |
 | `LOG_TO_FILE` | No | Default `true` → `logs/agent.log` |
@@ -271,16 +249,8 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | `MemorySaver` checkpointer; stable `thread_id` in API and Streamlit session. |
 | **Regression** | Cases `canada-multiturn`, `multiturn-order-arrival`; `test_agent_evaluation.py` |
 
-### 4. Evaluation suite crashed on API rate limits
 
-| | |
-|---|---|
-| **Reproduce** | Run all 21 agent cases quickly on free-tier APIs. |
-| **Root cause** | Provider RPM limits (e.g. Gemini 15 RPM); unhandled 429 aborted the suite. |
-| **Fix** | `EVAL_CASE_DELAY` between cases; per-case error capture in `runner.py`; retry on 429 in `agent.py`. |
-| **Regression** | `run_evaluation.py` completes with per-case errors instead of aborting |
-
-### 5. Retrieval exposed as agent tool (eval `tool: not_called` failures)
+### 4. Retrieval exposed as agent tool (eval `tool: not_called` failures)
 
 | | |
 |---|---|
@@ -289,7 +259,7 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | Pre-retrieve in `run_agent()` via `get_retriever().invoke()`, inject formatted passages into the user message, remove KB tool from the agent. |
 | **Regression** | All 4 `retrieval` cases + groundedness cases that set `tool: not_called` |
 
-### 6. Eval phrase heuristics vs natural model wording
+### 5. Eval phrase heuristics vs natural model wording
 
 | | |
 |---|---|
@@ -298,7 +268,7 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | Response-phrase guidance in `prompts.py`; aligned `customer_safe_message` in `orders.json` where applicable. |
 | **Regression** | `test_evaluation_assertions.py`; full agent eval |
 
-### 7. Prompt injection hard-blocked before model could refuse
+### 6. Prompt injection hard-blocked before model could refuse
 
 | | |
 |---|---|
