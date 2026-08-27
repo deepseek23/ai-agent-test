@@ -81,27 +81,72 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 
 ## Architecture
 
-```text
-User (Streamlit / HTTP)
-        │
-        ▼
-   FastAPI (src/api.py)  ── localhost:8000, CORS for Streamlit
-        │
-        ▼
-   run_agent (src/agent.py)
-        │  security input/output
-        │  hybrid retriever.invoke(query)  ← automatic pre-retrieval
-        │  inject passages into user message
-        ▼
-   LangGraph agent (src/llm.py)
-        ├── Chat model (Gemini / OpenRouter)
-        ├── MemorySaver (thread_id = conversation)
-        └── Tool (secured):
-              └── order_lookup → data/orders.json (sanitized payload only)
-
-Hybrid retriever (src/retriever.py) — used at request time, not as an agent tool:
-        ├── BM25 (active official/unofficial chunks)
-        └── Chroma (active filter, bge-small-en-v1.5)
+```
+                         ┌─────────────────────────┐
+                         │   knowledge-base/*.md    │
+                         │ (YAML frontmatter + MD)  │
+                         └────────────┬──────────────┘
+                                      │
+                     ┌────────────────▼────────────────┐
+                     │           INGESTION              │
+                     │  • parse frontmatter (Pydantic)  │
+                     │  • split by markdown headings     │
+                     │  • attach status/authority meta   │
+                     └────────────────┬────────────────┘
+                                      │  active, official/unofficial docs only
+              ┌───────────────────────┼───────────────────────┐
+              ▼                                                ▼
+   ┌─────────────────────┐                        ┌─────────────────────────┐
+   │   BM25Retriever      │                        │      Chroma vector DB    │
+   │   (keyword/sparse)   │                        │  bge-small-en-v1.5 embeds│
+   │        k = 10        │                        │  filter: status=active   │
+   └──────────┬───────────┘                        └────────────┬─────────────┘
+              └───────────────────┬───────────────────────────────┘
+                                   ▼
+                       ┌───────────────────────┐
+                       │  EnsembleRetriever     │
+                       │  (hybrid, 0.5 / 0.5)   │
+                       └───────────┬────────────┘
+                                   │
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │   knowledge_base_search tool    │
+                   │  (formats passages w/ source,   │
+                   │   status, authority for the LLM)│
+                   └───────────────┬────────────────┘
+                                   │
+                                   │        ┌──────────────────────────┐
+                                   │        │   order_lookup tool        │
+                                   │        │  (JSON order DB, PII-safe  │
+                                   │        │  field allowlist, cancel-  │
+                                   │        │  window logic)             │
+                                   │        └─────────────┬──────────────┘
+                                   │                       │
+                                   ▼                       ▼
+                        ┌───────────────────────────────────────┐
+                        │           SECURITY PIPELINE             │
+                        │  • input sanitizer (prompt-injection)   │
+                        │  • PII detector/masker (in + out)        │
+                        │  • output validator (harmful patterns)   │
+                        └───────────────────┬───────────────────┘
+                                             │  secured_tools
+                                             ▼
+                        ┌───────────────────────────────────────┐
+                        │              AGENT (LangChain)           │
+                        │  create_agent(llm, tools, system_prompt) │
+                        │  • LLM: Gemini (init_chat_model)          │
+                        │  • MemorySaver checkpointer (per-thread)  │
+                        │  • grounding & data-contract system prompt│
+                        └───────────────────┬───────────────────┘
+                                             │
+                                             ▼
+                        ┌───────────────────────────────────────┐
+                        │          run_agent(user_input)           │
+                        │  input check → agent.invoke → output check│
+                        │  + structured logging of tool calls        │
+                        └───────────────────┬───────────────────┘
+                                             ▼
+                                     Final response to user
 ```
 
 **RAG flow:** Each user message is augmented with retrieved KB passages before the LLM runs. Policy answers are grounded in those passages; the agent only calls `order_lookup` for order-specific questions. This matches the evaluation contract (`tool: not_called` for retrieval cases).
