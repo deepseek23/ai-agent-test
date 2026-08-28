@@ -90,36 +90,72 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    U[User\nStreamlit or HTTP] --> API[FastAPI /chat\nsrc/api.py]
-    API --> RUN[run_agent\nsrc/agent.py]
-
-    RUN --> IN[Input security\nsanitize, reject injection, mask PII]
-    IN --> PRE[Automatic pre-retrieval\nnot an agent tool]
-    PRE --> RAG[Metadata-aware hybrid RAG\nsrc/retriever.py]
-    RAG --> BM25[BM25\nactive chunks]
-    RAG --> CHROMA[Chroma similarity\nactive filter + embeddings]
-    BM25 --> CTX[Ranked KB chunks\ncontent + source metadata]
-    CHROMA --> CTX
-    CTX --> AUG[Augmented customer message\nretrieved context + question]
-
-    AUG --> ROUTER[LangChain / LangGraph agent\nLLM-driven routing]
-    ROUTER --> KB[Knowledge answer path\npolicies and products]
-    ROUTER --> ORDER[Order query path\nwhen an order ID is needed]
-    ORDER --> SEC[Secured order_lookup tool\ninput/output checks]
-    SEC --> DATA[data/orders.json]
-    DATA --> SAFE[Customer-safe order fields\nno PII or internal notes]
-    SAFE --> ROUTER
-
-    ROUTER --> MODEL[Chat model\nGemini or OpenRouter]
-    MODEL --> OUT[Answer with source citations\nor grounded handoff guidance]
-    OUT --> OUTPUT[Output security\nmask PII and block unsafe output]
-    OUTPUT --> RESP[ChatResponse\nresponse + thread_id]
-    RUN -. include_trace .-> TRACE[Structured trace\nmessages, tool calls, results, timing]
-    TRACE --> RESP
-
-    MEMORY[(MemorySaver\nconversation history)] <--> ROUTER
+```
+                         ┌─────────────────────────┐
+                         │   knowledge-base/*.md    │
+                         │ (YAML frontmatter + MD)  │
+                         └────────────┬──────────────┘
+                                      │
+                     ┌────────────────▼────────────────┐
+                     │           INGESTION              │
+                     │  • parse frontmatter (Pydantic)  │
+                     │  • split by markdown headings     │
+                     │  • attach status/authority meta   │
+                     └────────────────┬────────────────┘
+                                      │  active, official/unofficial docs only
+              ┌───────────────────────┼───────────────────────┐
+              ▼                                                ▼
+   ┌─────────────────────┐                        ┌─────────────────────────┐
+   │   BM25Retriever      │                        │      Chroma vector DB    │
+   │   (keyword/sparse)   │                        │  bge-small-en-v1.5 embeds│
+   │        k = 10        │                        │  filter: status=active   │
+   └──────────┬───────────┘                        └────────────┬─────────────┘
+              └───────────────────┬───────────────────────────────┘
+                                   ▼
+                       ┌───────────────────────┐
+                       │  EnsembleRetriever     │
+                       │  (hybrid, 0.5 / 0.5)   │
+                       └───────────┬────────────┘
+                                   │
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │   knowledge_base_search tool    │
+                   │  (formats passages w/ source,   │
+                   │   status, authority for the LLM)│
+                   └───────────────┬────────────────┘
+                                   │
+                                   │        ┌──────────────────────────┐
+                                   │        │   order_lookup tool        │
+                                   │        │  (JSON order DB, PII-safe  │
+                                   │        │  field allowlist, cancel-  │
+                                   │        │  window logic)             │
+                                   │        └─────────────┬──────────────┘
+                                   │                       │
+                                   ▼                       ▼
+                        ┌───────────────────────────────────────┐
+                        │           SECURITY PIPELINE             │
+                        │  • input sanitizer (prompt-injection)   │
+                        │  • PII detector/masker (in + out)        │
+                        │  • output validator (harmful patterns)   │
+                        └───────────────────┬───────────────────┘
+                                             │  secured_tools
+                                             ▼
+                        ┌───────────────────────────────────────┐
+                        │              AGENT (LangChain)           │
+                        │  create_agent(llm, tools, system_prompt) │
+                        │  • LLM: Gemini (init_chat_model)          │
+                        │  • MemorySaver checkpointer (per-thread)  │
+                        │  • grounding & data-contract system prompt│
+                        └───────────────────┬───────────────────┘
+                                             │
+                                             ▼
+                        ┌───────────────────────────────────────┐
+                        │          run_agent(user_input)           │
+                        │  input check → agent.invoke → output check│
+                        │  + structured logging of tool calls        │
+                        └───────────────────┬───────────────────┘
+                                             ▼
+                                     Final response to user
 ```
 
 ### Short architecture explanation
