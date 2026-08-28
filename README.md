@@ -8,10 +8,32 @@ Built for the Aster & Row intern take-home: grounded answers, explicit sources, 
 
 ## Demo video
 
+Record a **2–4 minute** demo (GIF or video). GitHub may not autoplay video files; use a clickable thumbnail or link.
 
-**Demo video:** [Watch demo (YouTube)](https://youtu.be/rnA_0aJmVXE)
+**Replace `YOUR_VIDEO_LINK_HERE` after you upload your recording.**
 
+<!-- Optional: add docs/demo-thumbnail.png and uncomment the line below -->
+<!-- [![Demo video thumbnail](docs/demo-thumbnail.png)](YOUR_VIDEO_LINK_HERE) -->
 
+**Demo video:** [Watch demo (YouTube / Drive / Loom)](YOUR_VIDEO_LINK_HERE)
+
+> **Tip:** Upload to YouTube (unlisted), Google Drive, or Loom. For a GIF, add `docs/demo.gif` and embed: `![Demo](docs/demo.gif)`
+
+### Demo script (questions to record)
+
+Use Streamlit (`streamlit run streamlit_app.py`) or the API (`python -m src.api`). Enable **Show agent trace** in Streamlit to see `order_lookup` tool calls (KB retrieval runs automatically before the model, not as a tool).
+
+| # | Scene | What to show | Example prompt(s) |
+|---|--------|----------------|-------------------|
+| 1 | **Knowledge base + citations** | Policy answer with `[Source: filename › heading]` (retrieved passages injected automatically) | `My TrailPlus membership was active when I ordered. What is my return window?` |
+| 2 | **Order lookup** | `order_lookup` in trace; shipped status, carrier, ETA | `Where is ORD-1007 and when should it arrive?` |
+| 3 | **Multi-turn conversation** | Same session; second message uses context without repeating the order ID | 1) `Do you ship internationally?` → 2) `What about Canada, and how long does it take?` |
+| 4 | **Refuse to guess / human handoff** | Insufficient info or privacy refusal | `Are all fabrics and adhesives in your bags vegan?` **or** `For ORD-1007, give me the customer's email, address, and risk score.` |
+| 5 | **Evaluation suite** | Terminal running the eval command with per-case PASS/FAIL | `python -m src.tests.run_evaluation` |
+
+Optional extra clip: **order follow-up** — `Where is ORD-1007?` then `When will it arrive?` (multi-turn tool use).
+
+---
 
 ## Setup (clean clone)
 
@@ -33,7 +55,13 @@ cp .env.example .env
 
 Edit `.env` and set the API key for your configured chat model (see [Environment variables](#environment-variables)).
 
-**Vector index:** The Chroma database must exist at `notebook/chroma_langchain_db`. If missing, run the ingestion cells in `notebook/demo_futher.ipynb` once to build it from `knowledge-base/`.
+**Vector index:** The Chroma database must exist at `src/chroma_langchain_db`. If missing, or after changing `EMBEDDING_MODEL` in `src/config.py`, rebuild it:
+
+```bash
+python -m src.ingest --force
+```
+
+Stop the API first if it is running (Chroma locks the database on Windows).
 
 **Verify install:**
 
@@ -51,7 +79,7 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | Yes* | Google AI key (current default model) |
-| `OPENROUTER_API_KEY` | No | OpenRouter API key if using `openrouter:*` model (use google only) |
+| `OPENROUTER_API_KEY` | Yes* | OpenRouter API key if using `openrouter:*` model |
 | `HF_TOKEN` | No | Hugging Face token for faster embedding downloads |
 | `LOG_LEVEL` | No | Default `INFO` |
 | `LOG_TO_FILE` | No | Default `true` → `logs/agent.log` |
@@ -68,7 +96,7 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 | Layer | Choice |
 |-------|--------|
 | **Chat model** | `google_genai:gemini-3.1-flash-lite` (default in `src/config.py`; also tested with OpenRouter `nvidia/nemotron-3.5-lightning:free`) |
-| **Embeddings** | HuggingFace `BAAI/bge-small-en-v1.5` via LangChain `init_embeddings` |
+| **Embeddings** | `google_genai:gemini-embedding-001` via LangChain `init_embeddings` (rebuild Chroma after changing model) |
 | **Framework** | LangChain agents + LangGraph (`MemorySaver` checkpointer) |
 | **Vector store** | Chroma (`langchain-chroma`), persisted locally |
 | **Keyword retrieval** | BM25 (`langchain-community`) |
@@ -81,79 +109,48 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 
 ## Architecture
 
-```
-                         ┌─────────────────────────┐
-                         │   knowledge-base/*.md    │
-                         │ (YAML frontmatter + MD)  │
-                         └────────────┬──────────────┘
-                                      │
-                     ┌────────────────▼────────────────┐
-                     │           INGESTION              │
-                     │  • parse frontmatter (Pydantic)  │
-                     │  • split by markdown headings     │
-                     │  • attach status/authority meta   │
-                     └────────────────┬────────────────┘
-                                      │  active, official/unofficial docs only
-              ┌───────────────────────┼───────────────────────┐
-              ▼                                                ▼
-   ┌─────────────────────┐                        ┌─────────────────────────┐
-   │   BM25Retriever      │                        │      Chroma vector DB    │
-   │   (keyword/sparse)   │                        │  bge-small-en-v1.5 embeds│
-   │        k = 10        │                        │  filter: status=active   │
-   └──────────┬───────────┘                        └────────────┬─────────────┘
-              └───────────────────┬───────────────────────────────┘
-                                   ▼
-                       ┌───────────────────────┐
-                       │  EnsembleRetriever     │
-                       │  (hybrid, 0.5 / 0.5)   │
-                       └───────────┬────────────┘
-                                   │
-                                   ▼
-                   ┌───────────────────────────────┐
-                   │   knowledge_base_search tool    │
-                   │  (formats passages w/ source,   │
-                   │   status, authority for the LLM)│
-                   └───────────────┬────────────────┘
-                                   │
-                                   │        ┌──────────────────────────┐
-                                   │        │   order_lookup tool        │
-                                   │        │  (JSON order DB, PII-safe  │
-                                   │        │  field allowlist, cancel-  │
-                                   │        │  window logic)             │
-                                   │        └─────────────┬──────────────┘
-                                   │                       │
-                                   ▼                       ▼
-                        ┌───────────────────────────────────────┐
-                        │           SECURITY PIPELINE             │
-                        │  • input sanitizer (prompt-injection)   │
-                        │  • PII detector/masker (in + out)        │
-                        │  • output validator (harmful patterns)   │
-                        └───────────────────┬───────────────────┘
-                                             │  secured_tools
-                                             ▼
-                        ┌───────────────────────────────────────┐
-                        │              AGENT (LangChain)           │
-                        │  create_agent(llm, tools, system_prompt) │
-                        │  • LLM: Gemini (init_chat_model)          │
-                        │  • MemorySaver checkpointer (per-thread)  │
-                        │  • grounding & data-contract system prompt│
-                        └───────────────────┬───────────────────┘
-                                             │
-                                             ▼
-                        ┌───────────────────────────────────────┐
-                        │          run_agent(user_input)           │
-                        │  input check → agent.invoke → output check│
-                        │  + structured logging of tool calls        │
-                        └───────────────────┬───────────────────┘
-                                             ▼
-                                     Final response to user
+```mermaid
+flowchart TD
+    U[User\nStreamlit or HTTP] --> API[FastAPI /chat\nsrc/api.py]
+    API --> RUN[run_agent\nsrc/agent.py]
+
+    RUN --> IN[Input security\nsanitize, reject injection, mask PII]
+    IN --> PRE[Automatic pre-retrieval\nnot an agent tool]
+    PRE --> RAG[Metadata-aware hybrid RAG\nsrc/retriever.py]
+    RAG --> BM25[BM25\nactive chunks]
+    RAG --> CHROMA[Chroma similarity\nactive filter + embeddings]
+    BM25 --> CTX[Ranked KB chunks\ncontent + source metadata]
+    CHROMA --> CTX
+    CTX --> AUG[Augmented customer message\nretrieved context + question]
+
+    AUG --> ROUTER[LangChain / LangGraph agent\nLLM-driven routing]
+    ROUTER --> KB[Knowledge answer path\npolicies and products]
+    ROUTER --> ORDER[Order query path\nwhen an order ID is needed]
+    ORDER --> SEC[Secured order_lookup tool\ninput/output checks]
+    SEC --> DATA[data/orders.json]
+    DATA --> SAFE[Customer-safe order fields\nno PII or internal notes]
+    SAFE --> ROUTER
+
+    ROUTER --> MODEL[Chat model\nGemini or OpenRouter]
+    MODEL --> OUT[Answer with source citations\nor grounded handoff guidance]
+    OUT --> OUTPUT[Output security\nmask PII and block unsafe output]
+    OUTPUT --> RESP[ChatResponse\nresponse + thread_id]
+    RUN -. include_trace .-> TRACE[Structured trace\nmessages, tool calls, results, timing]
+    TRACE --> RESP
+
+    MEMORY[(MemorySaver\nconversation history)] <--> ROUTER
 ```
 
-**RAG flow:** Each user message is augmented with retrieved KB passages before the LLM runs. Policy answers are grounded in those passages; the agent only calls `order_lookup` for order-specific questions. This matches the evaluation contract (`tool: not_called` for retrieval cases).
+### Short architecture explanation
 
-**Ingestion:** Markdown front matter + heading-based chunks (`src/ingest.py`). Metadata: `status`, `policy_authority`, `document_id`, headings, etc.
+1. **Request and security:** Streamlit or an HTTP client sends `POST /chat`. `run_agent` validates and sanitizes the message before processing it.
+2. **RAG chain:** Markdown files are split into heading-based chunks in `src/ingest.py`. Each chunk keeps metadata such as filename, heading, document status, and policy authority. For every allowed message, `src/retriever.py` searches only active documents with two retrievers: BM25 for keyword matches and Chroma for semantic similarity. `EnsembleRetriever` combines their results, and `format_chunks_for_llm` adds the passages and source metadata to the user message before the model runs.
+3. **Agent routing:** The LLM answers policy and product questions from the retrieved context. For order questions, it calls the secured `order_lookup` tool, which returns only customer-safe fields from `data/orders.json`.
+4. **Response:** Output security checks the final answer. The API returns the answer, `thread_id`, and optional trace data; `MemorySaver` keeps conversation history for follow-up questions.
 
-**Observability:** Structured logs (`logs/agent.log`), optional `include_trace` on `/chat` and Streamlit toggle (order tool calls, results, timing).
+**Important RAG detail:** Retrieval happens before the agent loop and is not an agent tool. This keeps knowledge answers grounded in active KB chunks while leaving `order_lookup` as the only callable business-data tool.
+
+**Observability:** Structured logs and `include_trace=true` expose security events, messages, tool calls, tool results, and timing.
 
 ---
 
@@ -294,8 +291,16 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | `MemorySaver` checkpointer; stable `thread_id` in API and Streamlit session. |
 | **Regression** | Cases `canada-multiturn`, `multiturn-order-arrival`; `test_agent_evaluation.py` |
 
+### 4. Evaluation suite crashed on API rate limits
 
-### 4. Retrieval exposed as agent tool (eval `tool: not_called` failures)
+| | |
+|---|---|
+| **Reproduce** | Run all 21 agent cases quickly on free-tier APIs. |
+| **Root cause** | Provider RPM limits (e.g. Gemini 15 RPM); unhandled 429 aborted the suite. |
+| **Fix** | `EVAL_CASE_DELAY` between cases; per-case error capture in `runner.py`; retry on 429 in `agent.py`. |
+| **Regression** | `run_evaluation.py` completes with per-case errors instead of aborting |
+
+### 5. Retrieval exposed as agent tool (eval `tool: not_called` failures)
 
 | | |
 |---|---|
@@ -304,7 +309,7 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | Pre-retrieve in `run_agent()` via `get_retriever().invoke()`, inject formatted passages into the user message, remove KB tool from the agent. |
 | **Regression** | All 4 `retrieval` cases + groundedness cases that set `tool: not_called` |
 
-### 5. Eval phrase heuristics vs natural model wording
+### 6. Eval phrase heuristics vs natural model wording
 
 | | |
 |---|---|
@@ -313,7 +318,7 @@ Last run: `python -m src.tests.run_evaluation` with `google_genai:gemini-3.1-fla
 | **Fix** | Response-phrase guidance in `prompts.py`; aligned `customer_safe_message` in `orders.json` where applicable. |
 | **Regression** | `test_evaluation_assertions.py`; full agent eval |
 
-### 6. Prompt injection hard-blocked before model could refuse
+### 7. Prompt injection hard-blocked before model could refuse
 
 | | |
 |---|---|

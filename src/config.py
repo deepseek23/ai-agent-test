@@ -2,7 +2,7 @@ from pathlib import Path
 import os
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CHROMA_DIR = PROJECT_ROOT / "notebook" / "chroma_langchain_db"
+CHROMA_DIR = PROJECT_ROOT / "src" / "chroma_langchain_db"
 KB_DIR = PROJECT_ROOT / "knowledge-base"
 ORDERS_PATH = PROJECT_ROOT / "data" / "orders.json"
 EVAL_FILE = PROJECT_ROOT / "evaluation" / "visible-cases.json"

@@ -221,4 +221,3 @@ test_case2.ipynb
 # Streamlit
 .streamlit/secrets.toml
 
-chroma_langchain_db

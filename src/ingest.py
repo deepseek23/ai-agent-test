@@ -108,3 +108,50 @@ def get_active_documents(documents: list[Document]) -> list[Document]:
         if d.metadata.get("status") == "active"
         and d.metadata.get("policy_authority") in ("official", "unofficial")
     ]
+
+
+def build_vector_store(*, force: bool = False) -> int:
+    """Build or rebuild the persisted Chroma index from active KB chunks."""
+    import shutil
+
+    from dotenv import load_dotenv
+    from langchain.embeddings import init_embeddings
+    from langchain_chroma import Chroma
+
+    from src.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
+
+    load_dotenv()
+
+    active_docs = get_active_documents(load_documents())
+    if not active_docs:
+        raise ValueError("No active documents found to index.")
+
+    if force and CHROMA_DIR.exists():
+        shutil.rmtree(CHROMA_DIR)
+
+    CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+
+    Chroma.from_documents(
+        documents=active_docs,
+        embedding=init_embeddings(EMBEDDING_MODEL),
+        collection_name=COLLECTION_NAME,
+        persist_directory=str(CHROMA_DIR),
+    )
+    return len(active_docs)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Build the Chroma vector index.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete the existing index before rebuilding.",
+    )
+    args = parser.parse_args()
+
+    count = build_vector_store(force=args.force)
+    from src.config import CHROMA_DIR
+
+    print(f"Indexed {count} active chunks into {CHROMA_DIR}")

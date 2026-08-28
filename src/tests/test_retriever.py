@@ -25,7 +25,7 @@ Project layout expected:
 project/
 ├── evaluation/
 │   └── visible-cases.json
-├── notebook/
+├── src/
 │   └── chroma_langchain_db/
 ├── src/
 │   └── tests/
@@ -65,8 +65,7 @@ from typing import Literal, Optional
 TESTS_DIR    = Path(__file__).resolve().parent
 PROJECT_ROOT = TESTS_DIR.parent.parent
 EVAL_FILE    = PROJECT_ROOT / "evaluation" / "visible-cases.json"
-NOTEBOOK_DIR = PROJECT_ROOT / "notebook"
-CHROMA_DIR   = NOTEBOOK_DIR / "chroma_langchain_db"
+CHROMA_DIR   = PROJECT_ROOT / "src" / "chroma_langchain_db"
 KB_DIR       = PROJECT_ROOT / "knowledge-base"
 
 COLLECTION_NAME = "example_collection"
@@ -258,9 +257,11 @@ def vector_store():
     if not CHROMA_DIR.exists():
         pytest.fail(
             f"Chroma database not found:\n{CHROMA_DIR}\n\n"
-            "Run the ingestion notebook first to build the database."
+            "Run `python -m src.ingest --force` to build the database."
         )
-    embedding = init_embeddings("huggingface:BAAI/bge-small-en-v1.5")
+    from src.config import EMBEDDING_MODEL
+
+    embedding = init_embeddings(EMBEDDING_MODEL)
     return Chroma(
         persist_directory=str(CHROMA_DIR),
         collection_name=COLLECTION_NAME,

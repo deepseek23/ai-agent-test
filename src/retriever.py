@@ -8,6 +8,14 @@ from src.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
 from src.ingest import get_active_documents, load_documents
 
 
+def _ensure_chroma_index() -> None:
+    if not CHROMA_DIR.exists():
+        raise FileNotFoundError(
+            f"Chroma database not found at {CHROMA_DIR}. "
+            "Run `python -m src.ingest --force` to build it."
+        )
+
+
 def build_hybrid_retriever(
     documents: list[Document] | None = None,
     bm25_k: int = 10,
@@ -21,6 +29,8 @@ def build_hybrid_retriever(
 
     bm25_retriever = BM25Retriever.from_documents(active_docs)
     bm25_retriever.k = bm25_k
+
+    _ensure_chroma_index()
 
     vector_store = Chroma(
         persist_directory=str(CHROMA_DIR),
