@@ -90,84 +90,23 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 
 ## Architecture
 
-```
-                         ┌─────────────────────────┐
-                         │   knowledge-base/*.md    │
-                         │ (YAML frontmatter + MD)  │
-                         └────────────┬──────────────┘
-                                      │
-                     ┌────────────────▼────────────────┐
-                     │           INGESTION              │
-                     │  • parse frontmatter (Pydantic)  │
-                     │  • split by markdown headings     │
-                     │  • attach status/authority meta   │
-                     └────────────────┬────────────────┘
-                                      │  active, official/unofficial docs only
-              ┌───────────────────────┼───────────────────────┐
-              ▼                                                ▼
-   ┌─────────────────────┐                        ┌─────────────────────────┐
-   │   BM25Retriever      │                        │      Chroma vector DB    │
-   │   (keyword/sparse)   │                        │  bge-small-en-v1.5 embeds│
-   │        k = 10        │                        │  filter: status=active   │
-   └──────────┬───────────┘                        └────────────┬─────────────┘
-              └───────────────────┬───────────────────────────────┘
-                                   ▼
-                       ┌───────────────────────┐
-                       │  EnsembleRetriever     │
-                       │  (hybrid, 0.5 / 0.5)   │
-                       └───────────┬────────────┘
-                                   │
-                                   ▼
-                   ┌───────────────────────────────┐
-                   │   knowledge_base_search tool    │
-                   │  (formats passages w/ source,   │
-                   │   status, authority for the LLM)│
-                   └───────────────┬────────────────┘
-                                   │
-                                   │        ┌──────────────────────────┐
-                                   │        │   order_lookup tool        │
-                                   │        │  (JSON order DB, PII-safe  │
-                                   │        │  field allowlist, cancel-  │
-                                   │        │  window logic)             │
-                                   │        └─────────────┬──────────────┘
-                                   │                       │
-                                   ▼                       ▼
-                        ┌───────────────────────────────────────┐
-                        │           SECURITY PIPELINE             │
-                        │  • input sanitizer (prompt-injection)   │
-                        │  • PII detector/masker (in + out)        │
-                        │  • output validator (harmful patterns)   │
-                        └───────────────────┬───────────────────┘
-                                             │  secured_tools
-                                             ▼
-                        ┌───────────────────────────────────────┐
-                        │              AGENT (LangChain)           │
-                        │  create_agent(llm, tools, system_prompt) │
-                        │  • LLM: Gemini (init_chat_model)          │
-                        │  • MemorySaver checkpointer (per-thread)  │
-                        │  • grounding & data-contract system prompt│
-                        └───────────────────┬───────────────────┘
-                                             │
-                                             ▼
-                        ┌───────────────────────────────────────┐
-                        │          run_agent(user_input)           │
-                        │  input check → agent.invoke → output check│
-                        │  + structured logging of tool calls        │
-                        └───────────────────┬───────────────────┘
-                                             ▼
-                                     Final response to user
-```
+The diagram below is the same request/response flow as before, redrawn as an Excalidraw flowchart. Nothing about the pipeline's logic, ordering, or components has changed — only the presentation.
 
-### Short architecture explanation
+![Architecture diagram](docs/architecture-diagram.svg)
 
-1. **Request and security:** Streamlit or an HTTP client sends `POST /chat`. `run_agent` validates and sanitizes the message before processing it.
-2. **RAG chain:** Markdown files are split into heading-based chunks in `src/ingest.py`. Each chunk keeps metadata such as filename, heading, document status, and policy authority. For every allowed message, `src/retriever.py` searches only active documents with two retrievers: BM25 for keyword matches and Chroma for semantic similarity. `EnsembleRetriever` combines their results, and `format_chunks_for_llm` adds the passages and source metadata to the user message before the model runs.
-3. **Agent routing:** The LLM answers policy and product questions from the retrieved context. For order questions, it calls the secured `order_lookup` tool, which returns only customer-safe fields from `data/orders.json`.
-4. **Response:** Output security checks the final answer. The API returns the answer, `thread_id`, and optional trace data; `MemorySaver` keeps conversation history for follow-up questions.
+- **Editable source:** [`docs/architecture.excalidraw`](docs/architecture.excalidraw) — open it at [excalidraw.com](https://excalidraw.com) (File → Open) to move boxes around or extend it.
+- **Static version:** `docs/architecture-diagram.svg` — renders directly on GitHub, no extra tooling needed.
 
-**Important RAG detail:** Retrieval happens before the agent loop and is not an agent tool. This keeps knowledge answers grounded in active KB chunks while leaving `order_lookup` as the only callable business-data tool.
+### How a request flows through the system
 
-**Observability:** Structured logs and `include_trace=true` expose security events, messages, tool calls, tool results, and timing.
+1. **Ingestion (offline / on rebuild).** `src/ingest.py` parses each file in `knowledge-base/*.md`, reading YAML frontmatter with Pydantic and splitting the body by markdown headings. Every resulting chunk carries metadata — filename, heading, document `status`, and policy `authority` — and only `active` documents are indexed.
+2. **Pre-retrieval, before the agent ever runs.** For an incoming message, `src/retriever.py` queries two retrievers in parallel: `BM25Retriever` (sparse/keyword match, k=10) and the Chroma vector store (semantic similarity, filtered to `status=active`). `EnsembleRetriever` merges both result sets with equal 0.5/0.5 weighting. This hybrid step happens **outside** the agent's tool loop — it is plain retrieval code called directly, not something the LLM chooses to invoke.
+3. **Passage formatting.** `knowledge_base_search`'s formatting logic (in `src/tools/kb_tool.py`) turns the merged passages into a labeled block — source, status, authority — and this block is injected into the user's message before the LLM sees it. This is why the LLM's context is always grounded in cited, active KB chunks, and why retrieval never shows up as a "tool call" in the eval trace.
+4. **Business-data tool.** If the question is about an order rather than policy, the agent calls `order_lookup`, which reads `data/orders.json` and returns only the customer-safe fields — PII-restricted, with cancellation-window and terminal-status logic applied (e.g. a cancelled order can't keep a stale ETA).
+5. **Security pipeline.** Both directions of traffic pass through `src/security.py`: the input sanitizer screens for prompt-injection patterns, and a PII detector/masker plus an output validator check what comes back before it's returned. `order_lookup` and the security checks are the only things wrapped as `secured_tools` for the agent.
+6. **Agent turn.** `create_agent(llm, tools, system_prompt)` runs the Gemini chat model against the (already-retrieved) context, with `order_lookup` as its only callable tool and a system prompt that encodes the order-data contract and grounding rules. `MemorySaver` keeps a per-`thread_id` checkpoint so follow-up turns retain prior context.
+7. **Orchestration and logging.** `run_agent(user_input)` is the single entry point that ties this together: input check → pre-retrieval → `agent.invoke` → output check, with structured logging of every tool call, tool result, and timing along the way.
+8. **Response.** The validated answer is returned to the caller, along with the `thread_id` used for any follow-up.
 
 ---
 
@@ -378,6 +317,9 @@ Another incomplete suggestion: moving tools without updating `security.py` impor
 ├── requirements.txt
 ├── .env.example
 ├── streamlit_app.py
+├── docs/
+│   ├── architecture.excalidraw  # editable flowchart (excalidraw.com)
+│   └── architecture-diagram.svg # static render, embedded above
 ├── evaluation/
 │   ├── visible-cases.json      # 15 supplied behavior cases
 │   ├── custom-cases.json       # 6 original cases
