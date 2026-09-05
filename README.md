@@ -92,10 +92,10 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 
 The diagram below is the same request/response flow as before, redrawn as an Excalidraw flowchart. Nothing about the pipeline's logic, ordering, or components has changed — only the presentation.
 
-![Architecture diagram](docs/architecture-diagram.svg)
+![Architecture diagram](architecture-diagram.svg)
 
-- **Editable source:** [`docs/architecture.excalidraw`](docs/architecture.excalidraw) — open it at [excalidraw.com](https://excalidraw.com) (File → Open) to move boxes around or extend it.
-- **Static version:** `docs/architecture-diagram.svg` — renders directly on GitHub, no extra tooling needed.
+- **Editable source:** [`architecture.excalidraw`](architecture.excalidraw) — open it at [excalidraw.com](https://excalidraw.com) (File → Open) to move boxes around or extend it.
+- **Static version:** `architecture-diagram.svg` — renders directly on GitHub, no extra tooling needed.
 
 ### How a request flows through the system
 
